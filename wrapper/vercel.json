@@ -4,6 +4,10 @@
         {
             "src": "index.html",
             "use": "@vercel/static"
+        },
+        {
+            "src": "ads.txt",
+            "use": "@vercel/static"
         }
     ],
     "routes": [
