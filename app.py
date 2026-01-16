@@ -22,6 +22,25 @@ st.set_page_config(
 # CSS 스타일 적용
 apply_finviz_style()
 
+# [CSS] Hide Streamlit Footer & Header & Remove Padding
+st.markdown("""
+<style>
+    /* Hide Streamlit Footer ("Built with Streamlit") */
+    footer {visibility: hidden;}
+    
+    /* Hide Top Decoration Bar */
+    header {visibility: hidden;} 
+    
+    /* Remove padding to fill iframe completely */
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 0rem;
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # -------------------------------------------------------------
 # 0. Session State 초기화 (가장 먼저 실행)
 # -------------------------------------------------------------
