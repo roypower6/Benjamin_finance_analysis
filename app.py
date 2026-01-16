@@ -22,7 +22,7 @@ st.set_page_config(
 # CSS 스타일 적용
 apply_finviz_style()
 
-# [CSS] Hide Streamlit Footer & Header & Remove Padding
+# [CSS] Hide Streamlit Footer & Header & Remove Padding & Borders
 st.markdown("""
 <style>
     /* Hide Streamlit Footer ("Built with Streamlit") */
@@ -33,10 +33,17 @@ st.markdown("""
     
     /* Remove padding to fill iframe completely */
     .block-container {
-        padding-top: 2rem;
-        padding-bottom: 0rem;
-        padding-left: 1rem;
-        padding-right: 1rem;
+        padding-top: 1rem !important;
+        padding-bottom: 0rem !important;
+        padding-left: 0rem !important;
+        padding-right: 0rem !important;
+        max-width: 100% !important;
+    }
+    
+    /* Remove any white borders around the app */
+    .stApp {
+        border: none !important;
+        margin: 0 !important;
     }
 </style>
 """, unsafe_allow_html=True)
