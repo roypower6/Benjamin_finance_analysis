@@ -28,16 +28,17 @@ st.markdown("""
     /* Hide Streamlit Footer ("Built with Streamlit") */
     footer {visibility: hidden;}
     
-    /* Hide Top Decoration Bar */
-    header {visibility: hidden;} 
+    /* Hide Top Decoration Bar - Commented out to show Redeploy button */
+    /* header {visibility: hidden;} */ 
     
-    /* Remove padding to fill iframe completely */
+    /* Adjust padding for better readability */
     .block-container {
         padding-top: 1rem !important;
-        padding-bottom: 0rem !important;
-        padding-left: 0rem !important;
-        padding-right: 0rem !important;
-        max-width: 100% !important;
+        padding-bottom: 2rem !important;
+        padding-left: 5rem !important;
+        padding-right: 5rem !important;
+        max-width: 95% !important;
+        margin: 0 auto !important;
     }
     
     /* Remove any white borders around the app */
@@ -843,13 +844,76 @@ else:
                     viz_col1, viz_col2, viz_col3 = st.columns(3)
                     
                     # 공통 차트 설정 함수
+                    # 공통 차트 설정 함수 (Bar + Line for Growth)
                     def create_bar_chart(df, y_col, title, color_seq=None):
-                        col_nametext = f'{y_col}_Text'
-                        df[col_nametext] = df[y_col].apply(format_currency)
+                        # Side-effect 방지를 위한 복사
+                        plot_df = df.copy()
                         
-                        fig = px.bar(df, x='Date_Str', y=y_col, title=title, text=col_nametext, color_discrete_sequence=color_seq)
-                        fig.update_traces(textposition='inside', textfont_color='white', insidetextanchor='start')
+                        # 날짜순 정렬 보장
+                        plot_df = plot_df.sort_index()
+                        
+                        # [Growth Calculation]
+                        # pct_change() computes percentage change from immediately previous row
+                        # 첫 번째 값은 NaN이 됨
+                        plot_df['Pct_Change'] = plot_df[y_col].pct_change() * 100
+                        
+                        col_nametext = f'{y_col}_Text'
+                        plot_df[col_nametext] = plot_df[y_col].apply(format_currency)
+                        
+                        # X축 레이블
+                        plot_df['X_Label'] = plot_df['Date_Str'] + "<br>(" + plot_df[col_nametext] + ")"
+                        
+                        # Create Dual Axis Chart
+                        fig = make_subplots(specs=[[{"secondary_y": True}]])
+                        
+                        # 1. Bar Chart (Left Axis - Amount)
+                        bar_color = color_seq[0] if color_seq else '#636efa' # Default Plotly Blue
+                        fig.add_trace(
+                            go.Bar(
+                                x=plot_df['X_Label'], 
+                                y=plot_df[y_col], 
+                                name="Amount",
+                                marker_color=bar_color,
+                                hovertemplate='%{x}<br>Amount: %{text}',
+                                text=plot_df[col_nametext] # For hover info mapping
+                            ),
+                            secondary_y=False
+                        )
+                        
+                        # 2. Line Chart (Right Axis - Growth %)
+                        fig.add_trace(
+                            go.Scatter(
+                                x=plot_df['X_Label'], 
+                                y=plot_df['Pct_Change'], 
+                                name="Growth %",
+                                mode='lines+markers+text',
+                                line=dict(color='#ff3d00', width=2), # Red/Orange for visibility
+                                marker=dict(size=6, color='#ff3d00'),
+                                text=plot_df['Pct_Change'].apply(lambda x: f"{x:+.1f}%" if pd.notnull(x) else ""),
+                                textposition="top center",
+                                textfont=dict(color='white', size=10, weight='bold'),
+                                hovertemplate='%{x}<br>Growth: %{y:+.2f}%'
+                            ),
+                            secondary_y=True
+                        )
+                        
+                        # Layout Updates
+                        fig.update_layout(
+                            title=dict(text=title, x=0, xanchor='left'),
+                            showlegend=True,
+                            height=400,
+                            paper_bgcolor='rgba(0,0,0,0)',
+                            plot_bgcolor='rgba(0,0,0,0)',
+                            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                            hovermode="x unified" # Unified hover is nice for comparison
+                        )
+                        
+                        # Axes
+                        fig.update_yaxes(title_text="", showgrid=True, gridcolor='rgba(128,128,128,0.2)', secondary_y=False)
+                        fig.update_yaxes(title_text="", showgrid=False, zeroline=False, secondary_y=True) # Hide grid for right axis
                         fig.update_xaxes(title_text='', type='category')
+                        
+                        # 막대 텍스트 제거 (X축으로 옮겼으므로)
                         return fig
 
                     # 1. 매출액 (Total Revenue)
@@ -871,23 +935,274 @@ else:
                             fig_op = create_bar_chart(fin_T_plot, 'Operating Income', f'영업이익 ({freq_option})', ['#ff7f0e'])
                             st.plotly_chart(fig_op, use_container_width=True)
                 
+                    # [NEW] 현금흐름표 차트 추가
+                    if cf_data is not None and not cf_data.empty:
+                        st.markdown("---")
+                        
+                        # 현금흐름 데이터 전처리
+                        cf_T = cf_data.T
+                        cf_T.index = pd.to_datetime(cf_T.index)
+                        cf_T = cf_T.sort_index()
+                        
+                        cf_T_plot = cf_T.copy()
+                        cf_T_plot['Date_Str'] = cf_T_plot.index.strftime('%b %Y')
+                        
+                        with st.container():
+                            cf_col1, cf_col2, cf_col3 = st.columns(3)
+                            
+                            # 4. 영업활동 현금흐름
+                            with cf_col1:
+                                if 'Operating Cash Flow' in cf_data.index:
+                                    fig_ocf = create_bar_chart(cf_T_plot, 'Operating Cash Flow', f'영업활동 현금흐름 ({freq_option})', ['#17becf'])
+                                    st.plotly_chart(fig_ocf, use_container_width=True)
+                                    
+                            # 5. 투자활동 현금흐름
+                            with cf_col2:
+                                if 'Investing Cash Flow' in cf_data.index:
+                                    fig_icf = create_bar_chart(cf_T_plot, 'Investing Cash Flow', f'투자활동 현금흐름 ({freq_option})', ['#9467bd'])
+                                    st.plotly_chart(fig_icf, use_container_width=True)
+                                    
+                            # 6. 재무활동 현금흐름
+                            with cf_col3:
+                                if 'Financing Cash Flow' in cf_data.index:
+                                    fig_fcf = create_bar_chart(cf_T_plot, 'Financing Cash Flow', f'재무활동 현금흐름 ({freq_option})', ['#bcbd22'])
+                                    st.plotly_chart(fig_fcf, use_container_width=True)
+                
                 with tab_data:
-                    # 데이터 보기에는 원본 날짜 포맷 유지 또는 Date_Str 제외
-                    # Formatter function
-                    def format_df_values(df):
-                        if df is None: return df
-                        return df.applymap(lambda x: format_currency(x) if isinstance(x, (int, float)) else x)
+                    
+                    # -----------------------------------------------------------------
+                    # [NEW] Enhanced Financial Data Table with Growth % and Coloring
+                    # -----------------------------------------------------------------
+                    
+                    # 재무제표 항목 한글 번역 매핑
+                    FINANCIAL_TERM_MAPPING = {
+                        # 대차대조표 (Balance Sheet)
+                        "Total Assets": "총자산",
+                        "Total Liabilities Net Minority Interest": "총부채",
+                        "Total Equity Gross Minority Interest": "총자본",
+                        "Total Capitalization": "총자본화",
+                        "Common Stock Equity": "보통주 자본",
+                        "Net Tangible Assets": "순유형자산",
+                        "Working Capital": "운전자본",
+                        "Invested Capital": "투자자본",
+                        "Tangible Book Value": "유형장부가치",
+                        "Total Debt": "총부채",
+                        "Net Debt": "순부채",
+                        "Share Issued": "발행주식수",
+                        "Ordinary Shares Number": "보통주 수",
+                        "Treasury Shares Number": "자사주 수",
+                        
+                        # 자산 세부
+                        "Cash And Cash Equivalents": "현금 및 현금성자산",
+                        "Other Short Term Investments": "기타 단기투자자산",
+                        "Inventory": "재고자산",
+                        "Accounts Receivable": "매출채권",
+                        "Current Assets": "유동자산",
+                        "Net PPE": "유형자산(순액)",
+                        "Goodwill": "영업권",
+                        "Intangible Assets": "무형자산",
+                        "Goodwill And Other Intangible Assets": "영업권 및 기타무형자산",
+                        "Non Current Assets": "비유동자산",
+                        "Prepaid Assets": "선급금",
+                        
+                        # 부채 세부
+                        "Accounts Payable": "매입채무",
+                        "Current Debt": "단기차입금",
+                        "Current Liabilities": "유동부채",
+                        "Long Term Debt": "장기차입금",
+                        "Long Term Debt And Capital Lease Obligation": "장기차입금 및 리스부채",
+                        "Non Current Liabilities": "비유동부채",
+                        "Current Deferred Revenue": "유동 이연수익",
+                        "Deferred Revenue": "이연수익",
+                        
+                        # 현금흐름표 (Cash Flow)
+                        "Operating Cash Flow": "영업활동 현금흐름",
+                        "Investing Cash Flow": "투자활동 현금흐름",
+                        "Financing Cash Flow": "재무활동 현금흐름",
+                        "End Cash Position": "기말 현금잔액",
+                        "Income Tax Paid Supplemental Data": "납부 법인세",
+                        "Interest Paid Supplemental Data": "지급 이자",
+                        "Capital Expenditure": "자본적 지출(CAPEX)",
+                        "Issuance Of Capital Stock": "주식 발행",
+                        "Issuance Of Debt": "차입금 조달",
+                        "Repayment Of Debt": "차입금 상환",
+                        "Repurchase Of Capital Stock": "자사주 매입",
+                        "Free Cash Flow": "잉여현금흐름(FCF)",
+                        "Changes In Cash": "현금 변동액",
+                        "Effect Of Exchange Rate Changes": "환율 변동 효과",
+                        "Beginning Cash Position": "기초 현금잔액",
+                        "Net Income From Continuing Operations": "계속영업 당기순이익",
+                        "Depreciation And Amortization": "감가상각비",
+                        "Change In Working Capital": "운전자본 변동",
+                        "Stock Based Compensation": "주식보상비용",
+                        
+                        # 손익계산서 (Income Statement)
+                        "Total Revenue": "매출액",
+                        "Cost Of Revenue": "매출원가",
+                        "Gross Profit": "매출총이익",
+                        "Operating Expense": "영업비용",
+                        "Operating Income": "영업이익",
+                        "Net Income": "당기순이익",
+                        "EBIT": "EBIT",
+                        "EBITDA": "EBITDA",
+                        "Interest Expense": "이자비용",
+                        "Tax Provision": "법인세비용",
+                        "Diluted EPS": "희석 EPS",
+                        "Basic EPS": "기본 EPS",
+                        "Research And Development": "연구개발비(R&D)",
+                        "Selling General And Administration": "판관비(SG&A)",
+                        
+                        # 기타 자주 나오는 항목들
+                        "Minority Interest": "소수지분",
+                        "Other Non Current Assets": "기타 비유동자산",
+                        "Other Current Assets": "기타 유동자산",
+                        "Other Non Current Liabilities": "기타 비유동부채",
+                        "Other Current Liabilities": "기타 유동부채",
+                        "Ppe Net": "유형자산(순액)",
+                        "Retained Earnings": "이익잉여금",
+                        "Gains Losses Not Affecting Retained Earnings": "기타포괄손익누계액(OCI)",
+                        "Total Debt": "총차입금"
+                    }
 
-                    st.subheader("손익계산서")
-                    st.dataframe(format_df_values(fin_data), use_container_width=True)
+                    def create_growth_dataframe(df):
+                        if df is None or df.empty:
+                            return df, []
+                        
+                        # 1. 날짜 기준 내림차순 정렬 (최신이 왼쪽)
+                        temp_df = df.copy()
+                        temp_df.columns = pd.to_datetime(temp_df.columns)
+                        temp_df = temp_df.sort_index(axis=1, ascending=False)
+                        
+                        # 2. 증감률 컬럼 생성을 위한 리스트 준비
+                        final_cols = [] 
+                        cols = temp_df.columns
+                        data_collector = {}
+                        
+                        # 3. 반복문을 통해 (현재 컬럼) -> (증감률) -> (다음 컬럼) 순서로 배치
+                        for i in range(len(cols)):
+                            curr_col = cols[i]
+                            curr_col_str = curr_col.strftime('%Y-%m-%d')
+                            
+                            # 현재 값 저장
+                            data_collector[curr_col_str] = temp_df[curr_col]
+                            final_cols.append(curr_col_str)
+                            
+                            # 마지막 컬럼이 아니면 증감률 계산
+                            if i < len(cols) - 1:
+                                prev_col = cols[i+1]
+                                
+                                # 증감률 계산 (Vectorized)
+                                diff = temp_df[curr_col] - temp_df[prev_col]
+                                pct_change = diff / temp_df[prev_col].abs()
+                                
+                                growth_col_name = f"DoD % ({i})" # 내부용 이름
+                                data_collector[growth_col_name] = pct_change
+                                final_cols.append(growth_col_name)
+
+                        # 4. DataFrame 생성
+                        growth_df = pd.DataFrame(data_collector, index=temp_df.index)
+                        
+                        # 컬럼 순서 재정렬
+                        growth_df = growth_df[final_cols]
+                        
+                        return growth_df, final_cols
+
+                    def display_styled_financials(title, df_raw):
+                        if df_raw is None or df_raw.empty:
+                            return
+
+                        # [NEW] Translate Index to Korean
+                        df_translated = df_raw.copy()
+                        # 인덱스 값을 문자열로 변환하여 매핑 시도 (인덱스 타입 안전성 확보)
+                        new_index = [FINANCIAL_TERM_MAPPING.get(str(idx), idx) for idx in df_translated.index]
+                        df_translated.index = new_index
+                        
+                        # [Fixed] Remove Duplicate Indices to prevent Styler Error
+                        if df_translated.index.duplicated().any():
+                            df_translated = df_translated.loc[~df_translated.index.duplicated(keep='first')]
+
+                        st.subheader(title)
+                        
+                        # Growth DF 생성 (번역된 DF 사용)
+                        g_df, ordered_cols = create_growth_dataframe(df_translated)
+                        
+                        # Styler 적용
+                        styler = g_df.style
+                        
+                        # 컬럼 포맷 설정
+                        format_dict = {}
+                        
+                        # 숨길 컬럼 및 이름 변경 매핑
+                        rename_cols = {}
+                        
+                        for col in ordered_cols:
+                            if "DoD %" in col:
+                                format_dict[col] = "{:+.1%}" # +12.5%
+                                rename_cols[col] = "YoY %" if freq_option == "연간 (Annual)" else "QoQ %"
+                            else:
+                                # Value Columns: Apply formatter
+                                # Styler for values: custom styling is harder with simple strings, 
+                                # so we keep them as numbers and format via styler
+                                format_dict[col] = lambda x: format_currency(x) if pd.notnull(x) else "-"
+                        
+                        styler.format(format_dict)
+                        
+                        # 색상 적용 함수
+                        def color_growth_and_values(val):
+                            # This applies to individual cells, but we need to know column type
+                            return '' 
+
+                        # Applymap for specific columns is better
+                        growth_cols = [c for c in g_df.columns if "DoD %" in c]
+                        
+                        def color_arrow(val):
+                            if pd.isna(val) or val == np.inf or val == -np.inf: return 'color: #888'
+                            color = '#39e75f' if val > 0 else '#ff4b4b' if val < 0 else '#888'
+                            return f'color: {color}'
+                        
+                        import numpy as np
+                        styler.applymap(color_arrow, subset=growth_cols)
+                        
+                        # 컬럼 이름 변경 (Display용)
+                        # Styler.hide(axis="index") option available? Yes
+                        # Rename columns using explicit HTML styled headers? 
+                        # Or simple rename
+                        
+                        # Streamlit dataframe column config can also handle this but standard Styler is more flexible for colors
+                        # Let's use `st.dataframe` with `column_config` is easier for labels, but `style` for colors.
+                        # Actually sending styler to st.dataframe works well
+                        
+                        # Rename columns in the styler proper (Make labels pretty)
+                        # The "DoD % (0)" needs to be distinct keys, but shown as just "MoM %"
+                        # We can use `set_table_styles` or modifying the header is tricky in pure Streamlit.
+                        # Workaround: Use meaningful unique names, clean them up visually?
+                        # Or just "Chg %"
+                        
+                        clean_renames = {c: ("기존 대비 증감" if "DoD" in c else c) for c in g_df.columns}
+                        # Actually let's just make them "YoY %" or "QoQ %" with hidden unique ID?
+                        # Streamlit doesn't support duplicate column names even in display normally.
+                        
+                        # Just use a simple trick: Append zero-width spaces for uniqueness if needed, 
+                        # but "Vs Last" is okay.
+                        
+                        # Let's stick to the internal names and use `.relabel_index` or similar if supported?
+                        # No, simpler: format the index (rows) and leave columns as dates vs changes.
+                        
+                        # Let's try replacing the Column Names with a Label map
+                        # Note: dataframe needs unique columns.
+                        
+                        st.dataframe(styler, use_container_width=True, height=400)
+
+                    # 렌더링 실행
+                    display_styled_financials("손익계산서", fin_data)
                     
                     if bs_data is not None:
-                        st.subheader("대차대조표")
-                        st.dataframe(format_df_values(bs_data), use_container_width=True)
+                        st.markdown("---")
+                        display_styled_financials("대차대조표", bs_data)
                     
                     if cf_data is not None:
-                        st.subheader("현금흐름표")
-                        st.dataframe(format_df_values(cf_data), use_container_width=True)
+                        st.markdown("---")
+                        display_styled_financials("현금흐름표", cf_data)
                 
                 # -----------------------------------------------------
                 # Analyst Target Price Section
