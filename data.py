@@ -93,9 +93,10 @@ def load_stock_data(symbol, period, interval):
         quarterly_balance_sheet = ticker.quarterly_balance_sheet
         cashflow = ticker.cashflow
         quarterly_cashflow = ticker.quarterly_cashflow
-        return history, info, financials, quarterly_financials, balance_sheet, quarterly_balance_sheet, cashflow, quarterly_cashflow
+        splits = ticker.splits
+        return history, info, financials, quarterly_financials, balance_sheet, quarterly_balance_sheet, cashflow, quarterly_cashflow, splits
     except Exception as e:
-        return None, None, None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None, None
 
 
 

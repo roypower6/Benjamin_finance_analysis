@@ -35,8 +35,8 @@ st.markdown("""
     .block-container {
         padding-top: 1rem !important;
         padding-bottom: 2rem !important;
-        padding-left: 5rem !important;
-        padding-right: 5rem !important;
+        padding-left: 7rem !important;
+        padding-right: 7rem !important;
         max-width: 95% !important;
         margin: 0 auto !important;
     }
@@ -108,59 +108,49 @@ with col_header_logo:
 with col_header_search:
     st.markdown('<div style="margin-top: 0px;"></div>', unsafe_allow_html=True)
     
-    # 1. Load Ticker Map
+    # 1. 맵 데이터 로드
     ticker_map = get_all_tickers_dict()
-    search_options = list(ticker_map.keys())
     
-    # 2. Add current selection if not in list (manual input case)
-    current_symbol = st.session_state.ticker_symbol
-    current_selection_index = None
-    
-    # If there's a symbol selected, try to find a matching formatted string
-    if current_symbol:
-        # Try finding exact ticker match in values
-        found_key = next((k for k, v in ticker_map.items() if v == current_symbol), None)
-        if found_key:
-             try:
-                current_selection_index = search_options.index(found_key)
-             except:
-                current_selection_index = None
-        else:
-             # If custom ticker not in map, just let it be (selectbox might reset or we adding it?)
-             # For selectbox, we can add it to options
-             custom_key = f"{current_symbol} | (Direct Input)"
-             search_options.insert(0, custom_key)
-             current_selection_index = 0
-             ticker_map[custom_key] = current_symbol
+    # helper: Query Resolution
+    def resolve_ticker(query):
+        if not query: return None
+        q = query.strip()
+        
+        # A. 티커 직접 매칭 (대문자로 변환하여 확인)
+        q_upper = q.upper()
+        if q_upper in ticker_map.values():
+            return q_upper
+            
+        # B. 기업명 검색 (부분 일치 Case-insensitive)
+        # 키 형식: "Apple Inc. (AAPL)" 등
+        q_lower = q.lower()
+        for label, ticker in ticker_map.items():
+            if q_lower in label.lower():
+                return ticker
+        
+        # C. 매칭 실패 시 입력값 그대로 티커로 사용 (직접 입력 모드)
+        return q_upper
 
-    # 3. Selectbox
-    selected_option = st.selectbox(
-        label="S&P 500 주식 검색 (기업명 또는 티커)",
-        options=search_options,
-        index=current_selection_index,
-        placeholder="기업명 혹은 티커를 입력하세요 (예: Apple, NVDA)",
+    # 2. Unified Search Input
+    # 현재 세션의 티커를 기본값으로 표시
+    current_val = st.session_state.ticker_symbol
+    
+    search_query = st.text_input(
+        label="주식 검색 (티커를 입력)",
+        value=current_val,
+        placeholder="티커(AAPL, GOOGL, MSFT) 입력...",
         label_visibility="visible"
-        # on_change handled manually below to avoid complications
+        # key를 지정하지 않음으로써 value 변경 시 UI 업데이트가 자연스럽게 되도록 유도
     )
     
-    # 4. Update Session State (Selectbox)
-    if selected_option:
-        new_symbol = ticker_map.get(selected_option)
-        if new_symbol and new_symbol != st.session_state.ticker_symbol:
-            st.session_state.ticker_symbol = new_symbol
-            st.rerun()
-
-    # 5. Direct Input (Fallback)
-    with st.expander("찾으시는 종목이 없나요? (직접 입력)"):
-        direct_input = st.text_input(
-            "티커 직접 입력 (예: DAVE, RDDT)", 
-            value="", 
-            key="direct_ticker_input"
-        )
-        if direct_input:
-            direct_symbol = direct_input.upper().strip()
-            if direct_symbol and direct_symbol != st.session_state.ticker_symbol:
-                st.session_state.ticker_symbol = direct_symbol
+    # 3. 변경 감지 및 처리
+    if search_query != st.session_state.ticker_symbol:
+        new_ticker = resolve_ticker(search_query)
+        if new_ticker:
+            # 입력값과 다른 티커가 리졸브 되었다면 (예: Apple -> AAPL)
+            # 혹은 그냥 직접 입력 티커라면
+            if new_ticker != st.session_state.ticker_symbol:
+                st.session_state.ticker_symbol = new_ticker
                 st.rerun()
 
 # 편의를 위해 변수에 할당 (st.session_state.ticker_symbol과 동일)
@@ -518,7 +508,8 @@ else:
     # 컨트롤 영역: Daily, Weekly, Monthly 버튼
     with controls_container:
         # 3개의 버튼으로 구성 (Daily, Weekly, Monthly)
-        timeframe = st.radio("데이터 간격 (Interval)", ["Daily", "Weekly", "Monthly"], horizontal=True)
+        # [Fix] 티커 변경 시 라디오 버튼 상태도 초기화되도록 key에 ticker_symbol을 포함
+        timeframe = st.radio("데이터 간격 (Interval)", ["Daily", "Weekly", "Monthly"], horizontal=True, key=f"interval_{ticker_symbol}")
         
         # 선택에 따라 Period와 Interval 매핑
         if timeframe == "Daily":
@@ -533,7 +524,7 @@ else:
 
     # 데이터 로딩
     with st.spinner(f'{ticker_symbol} 데이터 불러오는 중...'):
-        history, info, financials, quarterly_financials, balance_sheet, quarterly_balance_sheet, cashflow, quarterly_cashflow = load_stock_data(ticker_symbol, period, interval)
+        history, info, financials, quarterly_financials, balance_sheet, quarterly_balance_sheet, cashflow, quarterly_cashflow, splits = load_stock_data(ticker_symbol, period, interval)
 
     if history is None or history.empty:
         overview_container.error(f"'{ticker_symbol}' 데이터를 찾을 수 없습니다.")
@@ -565,84 +556,315 @@ else:
         # 섹션 2: 차트 (Chart Container)
         # -----------------------------------------------------
         with chart_container:
-            # 기술적 지표 계산
-            history = calculate_technical_indicators(history)
-            history = detect_candlestick_patterns(history)
+            # [NEW] Tabs for Charts
+            tab_tech, tab_per = st.tabs(["기술적 분석 (Technical)", "PER 밴드 (PER Bands)"])
             
-            # Subplots 생성 (Price, RSI, MACD)
-            fig = make_subplots(rows=3, cols=1, shared_xaxes=True, 
-                                vertical_spacing=0.1, 
-                                row_heights=[0.5, 0.25, 0.25],
-                                subplot_titles=(f'{ticker_symbol} Price', 'RSI', 'MACD'))
-            
-            # 1. Price Chart (Candlestick)
-            fig.add_trace(go.Candlestick(x=history.index,
-                            open=history['Open'],
-                            high=history['High'],
-                            low=history['Low'],
-                            close=history['Close'], showlegend=False), row=1, col=1)
-            
-            # 2. RSI Chart
-            fig.add_trace(go.Scatter(x=history.index, y=history['RSI'], name='RSI', line=dict(color='purple', width=1.5)), row=2, col=1)
-            fig.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1, annotation_text="Overbought (70)")
-            fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1, annotation_text="Oversold (30)")
-            
-            # 3. MACD Chart
-            # Histogram Colors
-            colors = ['green' if val >= 0 else 'red' for val in history['MACD_Hist']]
-            
-            fig.add_trace(go.Bar(x=history.index, y=history['MACD_Hist'], name='MACD Hist', marker_color=colors), row=3, col=1)
+            # --- Tab 1: Technical Analysis (Existing Code) ---
+            with tab_tech:
+                # 기술적 지표 계산
+                history = calculate_technical_indicators(history)
+                history = detect_candlestick_patterns(history)
+                
+                # Subplots 생성 (Price, RSI, MACD)
+                fig = make_subplots(rows=3, cols=1, shared_xaxes=True, 
+                                    vertical_spacing=0.1, 
+                                    row_heights=[0.5, 0.25, 0.25],
+                                    subplot_titles=(f'{ticker_symbol} Price', 'RSI', 'MACD'))
+                
+                # 1. Price Chart (Candlestick)
+                fig.add_trace(go.Candlestick(x=history.index,
+                                open=history['Open'],
+                                high=history['High'],
+                                low=history['Low'],
+                                close=history['Close'], showlegend=False), row=1, col=1)
+                
+                # 2. RSI Chart
+                fig.add_trace(go.Scatter(x=history.index, y=history['RSI'], name='RSI', line=dict(color='purple', width=1.5)), row=2, col=1)
+                fig.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1, annotation_text="Overbought (70)")
+                fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1, annotation_text="Oversold (30)")
+                
+                # 3. MACD Chart
+                # Histogram Colors
+                colors = ['green' if val >= 0 else 'red' for val in history['MACD_Hist']]
+                
+                fig.add_trace(go.Bar(x=history.index, y=history['MACD_Hist'], name='MACD Hist', marker_color=colors), row=3, col=1)
 
-            # [NEW] Chart Patterns Overlay
-            # 1. Bullish Patterns
-            bullish_pat = history[history['Pattern'].isin(['Hammer', 'Bullish Engulfing'])]
-            if not bullish_pat.empty:
-                fig.add_trace(go.Scatter(
-                    x=bullish_pat.index, y=bullish_pat['Pattern_Marker'],
-                    mode='markers', marker=dict(symbol='triangle-up', size=12, color='#00ff00'),
-                    text=bullish_pat['Pattern'], name='Bullish Pattern'
-                ), row=1, col=1)
-            
-            # 2. Bearish Patterns
-            bearish_pat = history[history['Pattern'].isin(['Bearish Engulfing'])]
-            if not bearish_pat.empty:
-                fig.add_trace(go.Scatter(
-                    x=bearish_pat.index, y=bearish_pat['Pattern_Marker'],
-                    mode='markers', marker=dict(symbol='triangle-down', size=12, color='#ff0000'),
-                    text=bearish_pat['Pattern'], name='Bearish Pattern'
-                ), row=1, col=1)
+                # [NEW] Chart Patterns Overlay
+                # 1. Bullish Patterns
+                bullish_pat = history[history['Pattern'].isin(['Hammer', 'Bullish Engulfing'])]
+                if not bullish_pat.empty:
+                    fig.add_trace(go.Scatter(
+                        x=bullish_pat.index, y=bullish_pat['Pattern_Marker'],
+                        mode='markers', marker=dict(symbol='triangle-up', size=12, color='#00ff00'),
+                        text=bullish_pat['Pattern'], name='Bullish Pattern'
+                    ), row=1, col=1)
+                
+                # 2. Bearish Patterns
+                bearish_pat = history[history['Pattern'].isin(['Bearish Engulfing'])]
+                if not bearish_pat.empty:
+                    fig.add_trace(go.Scatter(
+                        x=bearish_pat.index, y=bearish_pat['Pattern_Marker'],
+                        mode='markers', marker=dict(symbol='triangle-down', size=12, color='#ff0000'),
+                        text=bearish_pat['Pattern'], name='Bearish Pattern'
+                    ), row=1, col=1)
 
-            fig.add_trace(go.Scatter(x=history.index, y=history['MACD'], name='MACD', line=dict(color='blue', width=1.5)), row=3, col=1)
-            fig.add_trace(go.Scatter(x=history.index, y=history['Signal_Line'], name='Signal', line=dict(color='orange', width=1.5)), row=3, col=1)
-            
-            title_text = f'{ticker_symbol} Technical Analysis ({timeframe})'
-            
-            fig.update_layout(
-                title=title_text,
-                yaxis_title='Price',
-                xaxis_rangeslider_visible=False,
-                height=800,
-                showlegend=False,
-                plot_bgcolor='rgba(0,0,0,0)' # 투명 배경
-            )
-            
-            # Axis Styling for Boundaries (Subplots 구분선 명확화)
-            axis_style = dict(showline=True, linewidth=1, linecolor='white', mirror=True)
-            
-            # Update all axes
-            fig.update_xaxes(**axis_style)
-            fig.update_yaxes(**axis_style)
-            
-            # Fix Title Overlap: Shift subplot titles up
-            fig.update_annotations(yshift=20)
+                fig.add_trace(go.Scatter(x=history.index, y=history['MACD'], name='MACD', line=dict(color='blue', width=1.5)), row=3, col=1)
+                fig.add_trace(go.Scatter(x=history.index, y=history['Signal_Line'], name='Signal', line=dict(color='orange', width=1.5)), row=3, col=1)
+                
+                title_text = f'{ticker_symbol} Technical Analysis ({timeframe})'
+                
+                fig.update_layout(
+                    title=title_text,
+                    yaxis_title='Price',
+                    xaxis_rangeslider_visible=False,
+                    height=800,
+                    showlegend=False,
+                    plot_bgcolor='rgba(0,0,0,0)' # 투명 배경
+                )
+                
+                # Axis Styling for Boundaries (Subplots 구분선 명확화)
+                axis_style = dict(showline=True, linewidth=1, linecolor='white', mirror=True)
+                
+                # Update all axes
+                fig.update_xaxes(**axis_style)
+                fig.update_yaxes(**axis_style)
+                
+                # Fix Title Overlap: Shift subplot titles up
+                fig.update_annotations(yshift=20)
 
-            # Specific constraints
-            fig.update_yaxes(fixedrange=True, row=1, col=1)
-            fig.update_yaxes(fixedrange=True, row=2, col=1, range=[0, 100])
-            fig.update_yaxes(fixedrange=True, row=3, col=1)
-            fig.update_xaxes(fixedrange=False, row=3, col=1)
-            
-            st.plotly_chart(fig, use_container_width=True)
+                # Specific constraints
+                fig.update_yaxes(fixedrange=True, row=1, col=1)
+                fig.update_yaxes(fixedrange=True, row=2, col=1, range=[0, 100])
+                fig.update_yaxes(fixedrange=True, row=3, col=1)
+                fig.update_xaxes(fixedrange=False, row=3, col=1)
+                
+                # [NEW] Layout Split: Chart vs Status Panel
+                col_chart_main, col_chart_info = st.columns([0.85, 0.15])
+                
+                with col_chart_main:
+                    st.plotly_chart(fig, use_container_width=True)
+                    
+                with col_chart_info:
+                    # 1. Spacer for Price Chart (Upper 50% of 800px = 400px)
+                    # Adjusting for titles and margins
+                    st.markdown("<div style='height: 380px;'></div>", unsafe_allow_html=True)
+                    
+                    # 2. RSI Status
+                    last_rsi = history['RSI'].iloc[-1]
+                    rsi_color = "#999"
+                    rsi_msg = "Neutral"
+                    
+                    if last_rsi >= 70:
+                        rsi_color = "#ff4b4b" # Red
+                        rsi_msg = "Overbought (과매수)"
+                    elif last_rsi <= 30:
+                        rsi_color = "#00c853" # Green
+                        rsi_msg = "Oversold (과매도)"
+                        
+                    st.markdown(f"""
+                    <div style="
+                        border-left: 3px solid {rsi_color}; 
+                        padding-left: 10px; 
+                        margin-bottom: 0px;
+                    ">
+                        <div style="font-size: 0.8rem; color: #aaa;">RSI (14)</div>
+                        <div style="font-size: 1.4rem; font-weight: bold;">{last_rsi:.1f}</div>
+                        <div style="font-size: 0.9rem; color: {rsi_color};">{rsi_msg}</div>
+                        <div style="font-size: 0.7rem; color: #666; margin-top: 5px; line-height: 1.2;">
+                            RSI가 70이상이면 과매수, 30이하이면 과매도 상태를 의미합니다.
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # 3. Spacer for RSI section (25% of 800px = ~200px)
+                    st.markdown("<div style='height: 100px;'></div>", unsafe_allow_html=True)
+                    
+                    # 4. MACD Status
+                    last_macd = history['MACD'].iloc[-1]
+                    last_signal = history['Signal_Line'].iloc[-1]
+                    
+                    macd_bullish = last_macd > last_signal
+                    macd_color = "#00c853" if macd_bullish else "#ff4b4b"
+                    macd_msg = "Bullish (매수세)" if macd_bullish else "Bearish (매도세)"
+                    
+                    st.markdown(f"""
+                    <div style="
+                        border-left: 3px solid {macd_color}; 
+                        padding-left: 10px;
+                    ">
+                        <div style="font-size: 0.8rem; color: #aaa;">MACD</div>
+                        <div style="font-size: 1.4rem; font-weight: bold;">{last_macd:.2f}</div>
+                        <div style="font-size: 0.9rem; color: #ccc;">Sig: {last_signal:.2f}</div>
+                        <div style="font-size: 0.9rem; color: {macd_color}; margin-top: 2px;">{macd_msg}</div>
+                        <div style="font-size: 0.7rem; color: #666; margin-top: 5px; line-height: 1.2;">
+                            MACD가 시그널 선보다 높으면 상승 추세, 낮으면 하락 추세를 의미합니다.
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                st.info("💡 가이드\n\nRSI가 무조건 과매수라고 해서 팔아서는 안됩니다! 대부분의 주식들은 상승세일 때 과매수와 그 아래를 조금씩 유지하며 상승세를 이어갑니다. 과매수 상태에서도 상승세가 더 유지될 수 있고, 과매도 상태에서도 하락세가 더 유지될 수 있습니다. 이 지표들은 단순히 보조 지표로 활용해야 하며, 기업의 펀더멘탈, 밸류에이션을 함께 판단하여 투자 결정을 내려야 합니다. \n\nMACD 지표는 단순히 매수세일때 사고 매도세에 매도하는 지표가 아닙니다. 매도세에서 매수세로 전환되는 지점이나, 매도세가 꺾이고 줄어드는 지점을 찾는 안목도 매우 중요합니다. 주의할 점은 매도세와 매수세가 단순히 반복되지는 않는다는 점입니다. 매도세가 끝나려는 흐름에서 더 이어가버릴 수도 있고, 그 반대의 경우도 충분히 발생할 수 있습니다. 이러한 이유들로 이 지표들을 단순히 매수매도 결정의 기준으로 사용하는 것은 위험한 판단이 될 수 있습니다.")
+
+            # --- Tab 2: PER Bands ---
+            with tab_per:
+                 st.subheader(f"{ticker_symbol} PER Price Band")
+                 
+                 # 1. EPS Data Extraction (TTM Preferred)
+                 # Use Quarterly Financials for TTM Calculation
+                 q_eps = None
+                 eps_source = "TTM (Quarterly)"
+                 
+                 if quarterly_financials is not None and 'Diluted EPS' in quarterly_financials.index:
+                     q_eps = quarterly_financials.loc['Diluted EPS'].sort_index()
+                 elif quarterly_financials is not None and 'Basic EPS' in quarterly_financials.index:
+                     q_eps = quarterly_financials.loc['Basic EPS'].sort_index()
+                 
+                 final_eps_df = None
+                 
+                 # 2. Calculate TTM EPS
+                 if q_eps is not None and len(q_eps) >= 1:
+                     # Rolling Sum of last 4 quarters
+                     # If data is sparse, simple rolling might be risky but usually fine for yfinance data
+                     ttm_eps = q_eps.rolling(window=4).sum()
+                     
+                     # Fill NaN at the beginning with annualized single quarter or simple forward fill if acceptable?
+                     # Better: just dropna for accurate TTM. 
+                     # Or: If we want to show longer history even before 4 quarters, we can use Annual as fallback.
+                     # For simplicity, let's use what we have.
+                     ttm_eps = ttm_eps.dropna()
+                     
+                     # If TTM is empty (less than 4 quarters), fallback to Annual
+                     if ttm_eps.empty and financials is not None:
+                         # Fallback to Annual
+                         eps_source = "Annual"
+                         if 'Diluted EPS' in financials.index:
+                             final_eps_df = financials.loc['Diluted EPS'].sort_index()
+                         elif 'Basic EPS' in financials.index:
+                             final_eps_df = financials.loc['Basic EPS'].sort_index()
+                     else:
+                         final_eps_df = ttm_eps
+                 else:
+                     # Fallback to Annual
+                     eps_source = "Annual"
+                     if financials is not None:
+                         if 'Diluted EPS' in financials.index:
+                             final_eps_df = financials.loc['Diluted EPS'].sort_index()
+                         elif 'Basic EPS' in financials.index:
+                             final_eps_df = financials.loc['Basic EPS'].sort_index()
+                 
+                 if final_eps_df is not None and not final_eps_df.empty:
+                      # 3. Split Adjustment
+                      # yfinance EPS is "As Reported" (usually). Splits happened in history.
+                      # Price history is "Adjusted". 
+                      # So we must adjust EPS for splits to match Price.
+                      # Logic: If 4:1 split happened at date D, then EPS before D should be divided by 4.
+                      
+                      # splits is a Series: Date -> Split Ratio (e.g. 4.0)
+                      # Sort splits just in case
+                      if splits is not None and not splits.empty:
+                          splits_sorted = splits.sort_index()
+                          
+                          # [Fix] Timezone Mismatch in Comparison
+                          # splits index from yfinance is often tz-aware (America/New_York)
+                          # financials dates are usually naive regular timestamps
+                          if splits_sorted.index.tz is not None:
+                              splits_sorted.index = splits_sorted.index.tz_localize(None)
+                          
+                          adj_eps_values = []
+                          for date, val in final_eps_df.items():
+                              # Find all splits that happened AFTER this EPS date
+                              relevant_splits = splits_sorted[splits_sorted.index > date]
+                              
+                              # Cumulative split factor
+                              # If splits were 4.0 and 2.0 after the date, factor is 8.0
+                              split_factor = relevant_splits.prod() if not relevant_splits.empty else 1.0
+                              
+                              adj_val = val / split_factor
+                              adj_eps_values.append(adj_val)
+                              
+                          final_eps_df = pd.Series(adj_eps_values, index=final_eps_df.index)
+                      
+                      # 4. Merge with Daily History
+                      eps_df = pd.DataFrame({'EPS': final_eps_df})
+                      eps_df.index = pd.to_datetime(eps_df.index)
+                      eps_df = eps_df.sort_index()
+                      
+                      hist_sorted = history.sort_index()
+                      
+                      # [Fix] Timezone Mismatch Error
+                      if hist_sorted.index.tz is not None:
+                          hist_sorted.index = hist_sorted.index.tz_localize(None)
+                      
+                      if eps_df.index.tz is not None:
+                           eps_df.index = eps_df.index.tz_localize(None)
+
+                      # merge_asof
+                      combined = pd.merge_asof(hist_sorted, eps_df, left_index=True, right_index=True, direction='backward')
+                      combined = combined.dropna(subset=['EPS'])
+                      
+                      # Filter negative EPS for PER bands? usually PER bands only for +EPS
+                      # But let's plot anyway, maybe user wants to see
+                      
+                      if not combined.empty:
+                            # 5. Calculate Bands
+                            combined['PER_10'] = combined['EPS'] * 10
+                            combined['PER_15'] = combined['EPS'] * 15
+                            combined['PER_20'] = combined['EPS'] * 20
+                            combined['PER_25'] = combined['EPS'] * 25
+                            combined['PER_30'] = combined['EPS'] * 30
+                            
+                            # 6. Plot
+                            fig_per = go.Figure()
+                            
+                            # Price
+                            fig_per.add_trace(go.Scatter(
+                                x=combined.index, y=combined['Close'], 
+                                name='Price', 
+                                line=dict(color='white', width=2)
+                            ))
+                            
+                            # Bands
+                            bands = [
+                                (10, '#ef5350'),  # Red
+                                (15, '#ffa726'),  # Orange
+                                (20, '#66bb6a'),  # Green
+                                (25, '#42a5f5'),  # Blue
+                                (30, '#ab47bc')   # Purple
+                            ]
+                            
+                            for mult, col in bands:
+                                # Show band only if EPS > 0
+                                mask = combined['EPS'] > 0
+                                if mask.any():
+                                    fig_per.add_trace(go.Scatter(
+                                        x=combined[mask].index, 
+                                        y=combined.loc[mask, f'PER_{mult}'], 
+                                        name=f'PER {mult}x', 
+                                        line=dict(color=col, width=1, dash='dot'),
+                                        hoverinfo='name+y'
+                                    ))
+                                
+                            fig_per.update_layout(
+                                title=f'{ticker_symbol} Price vs PER Bands ({eps_source})',
+                                yaxis_title='Price',
+                                height=600,
+                                plot_bgcolor='rgba(0,0,0,0)',
+                                xaxis_rangeslider_visible=False,
+                                hovermode="x unified",
+                                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                            )
+                            
+                            axis_style = dict(showline=True, linewidth=1, linecolor='white', mirror=True)
+                            fig_per.update_xaxes(**axis_style)
+                            fig_per.update_yaxes(**axis_style)
+
+                            st.plotly_chart(fig_per, use_container_width=True)
+                            
+                            st.info(f"💡 **가이드**: 이 차트는 **{eps_source} EPS**와 **주식 분할(Split) 조정**이 반영된 데이터를 사용합니다. 주가가 수익성 대비 역사적으로 어느 구간(PER 10배~30배)에 있는지 확인하세요.")
+                            
+                      else:
+                          st.warning("EPS 데이터를 매칭할 수 없어 밴드 차트를 그릴 수 없습니다.")
+                 else:
+                     st.warning("재무 데이터에서 EPS 정보를 찾을 수 없어 밴드 차트를 그릴 수 없습니다.")
 
         # -----------------------------------------------------
         # 섹션 2.5: 핵심 지표 대시보드 (Key Metrics)
@@ -937,8 +1159,6 @@ else:
                 
                     # [NEW] 현금흐름표 차트 추가
                     if cf_data is not None and not cf_data.empty:
-                        st.markdown("---")
-                        
                         # 현금흐름 데이터 전처리
                         cf_T = cf_data.T
                         cf_T.index = pd.to_datetime(cf_T.index)
@@ -967,7 +1187,9 @@ else:
                                 if 'Financing Cash Flow' in cf_data.index:
                                     fig_fcf = create_bar_chart(cf_T_plot, 'Financing Cash Flow', f'재무활동 현금흐름 ({freq_option})', ['#bcbd22'])
                                     st.plotly_chart(fig_fcf, use_container_width=True)
-                
+
+                st.info("💡 가이드\n\n 순이익과 영업이익만 보고 기업의 모든 것을 판단해서는 안됩니다. 순이익과 영업이익은 생각보다 오염되기 쉽습니다. 인수합병, 자산상각, 임직원의 스톡옵션 행사 등 수많은 요소들이 영향을 미칠 수 있고, 심한 경우 경영진들이 의도적으로 부풀리거나 축소할 수도 있습니다. 특히나 임직원들의 스톡옵션 행사 비율이 높은 초기 IT 기업의 경우 순이익과 영업이익이 마이너스로 표기되는 경우가 많습니다.\n\n 기업이 제대로 돈을 벌고 있는지 확인하고 싶다면, 영업활동 현금흐름을 확인하는 것도 좋은 방법이 될 수 있습니다. 우량한 기업들의 경우 영업활동 현금흐름이 +, 투자활동, 재무활동 현금흐름이 -로 표기되는 경우가 많습니다. (금융 기업들의 경우 영업활동 현금흐름이 -로 표기되고, 재무활동 현금흐름이 +로 표기되는 경우도 있으니 참고하시기 바랍니다.)")
+
                 with tab_data:
                     
                     # -----------------------------------------------------------------
@@ -1286,17 +1508,19 @@ else:
                         
                         
                         # 2. Scenarios Definition
-                        # (Bear, Base, Bull)
+                        # (Very Bearish, Bearish, Base, Bullish, Very Bullish)
                         scenarios = {
-                            "약세 (Bear)": {"wacc": 0.11, "growth": 0.10, "terminal": 0.02, "color": "#ff4b4b"},
-                            "평범 (Base)": {"wacc": 0.09, "growth": 0.15, "terminal": 0.025, "color": "#f0f2f6"}, # Light Grey/Default
-                            "강세 (Bull)": {"wacc": 0.07, "growth": 0.20, "terminal": 0.03, "color": "#39e75f"}
+                            "최악 (Very Bearish)": {"wacc": 0.12, "growth": 0.05, "terminal": 0.015, "color": "#b71c1c"}, # Dark Red
+                            "약세 (Bearish)": {"wacc": 0.105, "growth": 0.10, "terminal": 0.02, "color": "#ff4b4b"}, # Red
+                            "평범 (Base)": {"wacc": 0.09, "growth": 0.15, "terminal": 0.025, "color": "#f0f2f6"}, # Default
+                            "강세 (Bullish)": {"wacc": 0.075, "growth": 0.20, "terminal": 0.03, "color": "#69f0ae"}, # Light Green
+                            "최상 (Very Bullish)": {"wacc": 0.06, "growth": 0.25, "terminal": 0.035, "color": "#00c853"} # Green
                         }
 
                         st.markdown("#### 시나리오별 적정 주가 (Scenario Analysis)")
                         
                         # Prepare columns for scenarios
-                        s_cols = st.columns(3)
+                        s_cols = st.columns(5)
                         
                         # Loop through scenarios
                         for idx, (name, params) in enumerate(scenarios.items()):
@@ -1550,6 +1774,21 @@ else:
                  # User requested no decimal representation for Price (Integer)
                  disp_insider['Price'] = disp_insider['Price'].apply(lambda x: f"${x:,.0f}" if isinstance(x, (int, float)) else x)
 
+             # [NEW] 컬럼명 한글 변환
+             # 화면 표시용이므로 포맷팅 이후에 변경
+             insider_col_map = {
+                 "Start Date": "날짜",
+                 "Insider": "내부자",
+                 "Relation": "직위",
+                 "Position": "직위", 
+                 "Shares": "수량",
+                 "Value": "금액",
+                 "Price": "평단가",
+                 "Ownership": "소유 형태",
+                 "Ownership Type": "소유 형태"
+             }
+             disp_insider.rename(columns=insider_col_map, inplace=True)
+
              # Create Styler
              styler = disp_insider.style.apply(highlight_insider, axis=1)
              
@@ -1565,7 +1804,7 @@ else:
              
              # Configure Columns
              hide_config = {
-                 "Start Date": st.column_config.DateColumn("Date", format="YYYY-MM-DD"),
+                 "날짜": st.column_config.DateColumn("날짜", format="YYYY-MM-DD"),
              }
              for c in existing_cols_to_hide:
                  hide_config[c] = None # Ensure logic hides them in dataframe config too depending on streamlit version
@@ -1588,85 +1827,41 @@ else:
         ownership = load_ownership_data(ticker_symbol)
         
         if ownership:
-            col_own_1, col_own_2 = st.columns(2)
-            
-            # 1. Shareholders Pie Chart
-            with col_own_1:
-                st.subheader("주주 구성 (Shareholders)")
-                major = ownership.get('major')
-                if major is not None and not major.empty:
-                    try:
-                        # Parse yfinance major_holders output
-                        insider_pct = 0.0
-                        inst_pct = 0.0
-                        
-                        for idx, row in major.iterrows():
-                            # ... (Parsing logic remains same) ...
-                            row_vals = row.values
-                            val = 0.0
-                            text_col = ""
-                            for v in row_vals:
-                                s = str(v)
-                                if '%' in s or s.replace('.', '', 1).isdigit():
-                                    try:
-                                        val = float(s.replace('%', ''))
-                                        if val < 1.05 and '%' not in s: val *= 100
-                                    except: pass
-                                else:
-                                    text_col += s.lower() + " "
-                            if 'insider' in text_col: insider_pct = val
-                            elif 'institutions' in text_col and 'float' not in text_col: inst_pct = val
-                            
-                        # Calculate Public/Other
-                        total_known = insider_pct + inst_pct
-                        other_pct = max(0, 100.0 - total_known)
-                        
-                        # Data for Pie
-                        labels = ['기관 (Institutions)', '내부자 (Insiders)', '기타/개인 (Public/Other)']
-                        values = [inst_pct, insider_pct, other_pct]
-                        colors = ['#4285F4', '#FFCA28', '#E0E0E0'] # Blue, Amber, Grey
-                        
-                        # Donut Chart
-                        fig_pie = go.Figure(data=[go.Pie(
-                            labels=labels, values=values, hole=.4,
-                            marker=dict(colors=colors), textinfo='label+percent', hoverinfo='label+percent'
-                        )])
-                        fig_pie.update_layout(
-                            margin=dict(t=0, b=0, l=0, r=0), showlegend=True,
-                            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-                            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=300
-                        )
-                        st.plotly_chart(fig_pie, use_container_width=True)
-                    except Exception as e:
-                        st.error(f"지분율 데이터 처리 중 오류: {e}")
-                else:
-                    st.info("지분율 데이터 없음")
+             # 1. Top Institutional Holders Only (User Requested Deletion of Shareholders Pie Chart)
+             st.subheader("주요 보유 기관 (Top Institutions)")
+             inst_holders = ownership.get('institutional')
+             
+             if inst_holders is not None and not inst_holders.empty:
+                 disp_inst = inst_holders.copy()
+                 
+                 # Format Numbers (Quantity/Value) uses fmt_bn (Billions/Millions/etc)
+                 if 'Value' in disp_inst.columns:
+                     disp_inst['Value'] = disp_inst['Value'].apply(lambda x: fmt_bn(x) if pd.notnull(x) else x)
+                 if 'Shares' in disp_inst.columns:
+                     disp_inst['Shares'] = disp_inst['Shares'].apply(lambda x: fmt_bn(x) if pd.notnull(x) else x)
+                 if 'Date Reported' in disp_inst.columns:
+                      disp_inst['Date Reported'] = pd.to_datetime(disp_inst['Date Reported']).dt.strftime('%Y-%m-%d')
+                 
+                 # Format Percentage Columns (Multiply by 100 and add %)
+                 # yfinance usually returns 0.05 for 5%. User wants "5.00%"
+                 for pct_col in ['pctHeld', 'pctChange']:
+                     if pct_col in disp_inst.columns:
+                         disp_inst[pct_col] = disp_inst[pct_col].apply(lambda x: f"{x*100:,.2f}%" if pd.notnull(x) and isinstance(x, (int, float)) else x)
 
-            # 2. Top Institutional Holders
-            with col_own_2:
-                st.subheader("주요 보유 기관 (Top Institutions)")
-                inst_holders = ownership.get('institutional')
-                if inst_holders is not None and not inst_holders.empty:
-                    disp_inst = inst_holders.copy()
-                    
-                    if 'Value' in disp_inst.columns:
-                        disp_inst['Value'] = disp_inst['Value'].apply(lambda x: fmt_bn(x) if pd.notnull(x) else x)
-                    if 'Shares' in disp_inst.columns:
-                        disp_inst['Shares'] = disp_inst['Shares'].apply(lambda x: fmt_bn(x) if pd.notnull(x) else x)
-                    if 'Date Reported' in disp_inst.columns:
-                         disp_inst['Date Reported'] = pd.to_datetime(disp_inst['Date Reported']).dt.strftime('%Y-%m-%d')
-                    
-                    # Format % Out (pctHeld) AND pctChange
-                    for c in disp_inst.columns:
-                        # Check for pct or % in name
-                        lower_c = c.lower()
-                        if ('pct' in lower_c or '%' in c):
-                             # Apply % formatting
-                             disp_inst[c] = disp_inst[c].apply(lambda x: f"{x*100:.2f}%" if isinstance(x, (int, float)) else x)
-                    
-                    st.dataframe(disp_inst, use_container_width=True, hide_index=True)
-                else:
-                    st.info("보유 기관 데이터 없음")
+                 # Translate Columns
+                 inst_columns_map = {
+                     "Holder": "기관명",
+                     "Shares": "보유 주식수",
+                     "Date Reported": "보고일",
+                     "pctHeld": "지분율",
+                     "pctChange": "지분율 변화",
+                     "Value": "평가 가치"
+                 }
+                 disp_inst.rename(columns=inst_columns_map, inplace=True)
+                 
+                 st.dataframe(disp_inst, use_container_width=True, hide_index=True)
+             else:
+                 st.info("기관 보유 데이터 없음")
         else:
             st.info("주주 데이터를 불러올 수 없습니다.")
 
@@ -1703,13 +1898,17 @@ st.html("""
 
 <div class="footer">
     <div>
-        Quotes delayed 15 minutes for NASDAQ, NYSE and AMEX.
+        본 서비스에서 제공하는 모든 금융 데이터(주가, 재무제표 등)는 <strong>Yahoo Finance</strong>로부터 제공받으며, 실시간 값이 아닐 수 있습니다 (최소 15분 지연).
     </div>
 
     <div class="disclaimer">
-        <strong>Legal Disclaimer</strong>: Investment decisions are your own responsibility. This website is for informational purposes only.<br>
-        Built with <a href="https://streamlit.io" target="_blank">Streamlit</a> (Apache License 2.0).<br>
-        Copyright © 2026 Investment Analysis Dashboard. All Rights Reserved.
+        <strong>면책 조항 (Disclaimer)</strong>: 본 사이트는 투자를 위한 정보 제공을 목적으로 하며, 투자의 책임은 전적으로 투자자 본인에게 있습니다. 어떠한 경우에도 본 사이트의 정보가 법적 책임소재의 증빙자료로 사용될 수 없습니다.<br>
+        <br>
+        데이터 출처: Yahoo Finance <br>
+        개발 및 운영: Benjamin Finance Analysis Dashboard Team <br>
+        문의: roy040707@gmail.com <br>
+        <br>
+        Copyright © 2026 Benjamin Finance Analysis Dashboard. All Rights Reserved.
     </div>
 </div>
 """)
