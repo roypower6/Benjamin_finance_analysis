@@ -44,9 +44,9 @@ st.markdown("""
     /* Mobile Optimization */
     @media (max-width: 768px) {
         .block-container {
-            padding-left: 1rem !important;
-            padding-right: 1rem !important;
-            padding-top: 0.5rem !important;
+            padding-left: 0.2rem !important;
+            padding-right: 0.2rem !important;
+            padding-top: 0.2rem !important;
             max-width: 100% !important;
         }
         
