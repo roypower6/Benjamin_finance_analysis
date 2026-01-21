@@ -56,6 +56,7 @@ def apply_finviz_style():
             justify-content: center;
             align-items: baseline;
             gap: 8px;
+            flex-wrap: wrap;
         }
         .metric-delta {
             font-size: 0.8rem;

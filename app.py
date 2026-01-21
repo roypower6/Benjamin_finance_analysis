@@ -31,14 +31,42 @@ st.markdown("""
     /* Hide Top Decoration Bar - Commented out to show Redeploy button */
     /* header {visibility: hidden;} */ 
     
-    /* Adjust padding for better readability */
+    /* Adjust padding for better readability - DEFAULT (Desktop) */
     .block-container {
         padding-top: 1rem !important;
         padding-bottom: 2rem !important;
-        padding-left: 7rem !important;
-        padding-right: 7rem !important;
+        padding-left: 5rem !important; /* Reduced from 7rem for better average fit */
+        padding-right: 5rem !important;
         max-width: 95% !important;
         margin: 0 auto !important;
+    }
+    
+    /* Mobile Optimization */
+    @media (max-width: 768px) {
+        .block-container {
+            padding-left: 1rem !important;
+            padding-right: 1rem !important;
+            padding-top: 0.5rem !important;
+            max-width: 100% !important;
+        }
+        
+        /* Adjust global font sizes if needed for mobile */
+        h1 { font-size: 1.8rem !important; }
+        h2 { font-size: 1.5rem !important; }
+        h3 { font-size: 1.3rem !important; }
+        
+        /* Reduce gap between columns in mobile stack */
+        div[data-testid="column"] {
+            margin-bottom: 1rem !important;
+        }
+        
+        /* Hide spacers on mobile */
+        .desktop-spacer {
+            display: none !important;
+            height: 0 !important;
+            margin: 0 !important;
+            padding: 0 !important;
+        }
     }
     
     /* Remove any white borders around the app */
@@ -647,7 +675,7 @@ else:
                 with col_chart_info:
                     # 1. Spacer for Price Chart (Upper 50% of 800px = 400px)
                     # Adjusting for titles and margins
-                    st.markdown("<div style='height: 380px;'></div>", unsafe_allow_html=True)
+                    st.markdown("<div class='desktop-spacer' style='height: 380px;'></div>", unsafe_allow_html=True)
                     
                     # 2. RSI Status
                     last_rsi = history['RSI'].iloc[-1]
@@ -677,7 +705,7 @@ else:
                     """, unsafe_allow_html=True)
                     
                     # 3. Spacer for RSI section (25% of 800px = ~200px)
-                    st.markdown("<div style='height: 100px;'></div>", unsafe_allow_html=True)
+                    st.markdown("<div class='desktop-spacer' style='height: 100px;'></div>", unsafe_allow_html=True)
                     
                     # 4. MACD Status
                     last_macd = history['MACD'].iloc[-1]
@@ -1036,7 +1064,7 @@ else:
             # Layout: Header/Options (Left) | Horizontal Ad (Right)
             st.header("📊 재무 데이터 시각화")
             # 연간/분기 선택 라디오 버튼
-            freq_option = st.radio("보고서 기준", ["연간 (Annual)", "분기별 (Quarterly)"], horizontal=True)
+            freq_option = st.radio("보고서 기준", ["연간 (Annual)", "분기별 (Quarterly)"], horizontal=True, key=f"freq_{ticker_symbol}")
 
             if freq_option == "연간 (Annual)":
                 bs_data = balance_sheet
